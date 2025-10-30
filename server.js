@@ -39,7 +39,6 @@ app.post('/api/send-order', async (req, res) => {
   try {
     const { 
       orderId, 
-      date, 
       customerName, 
       customerPhone, 
       customerComment,
@@ -59,7 +58,7 @@ app.post('/api/send-order', async (req, res) => {
     // Формируем сообщение админу
     let message = "🆕 <b>НОВЫЙ ЗАКАЗ!</b>\n\n";
     message += `📋 Заказ #${orderId.slice(-6)}\n`;
-    message += `📅 ${new Date(date).toLocaleString('ru-RU')}\n\n`;
+    message += `📅 ${new Date().toLocaleString('ru-RU')}\n\n`;
     
     message += "<b>👤 Клиент:</b>\n";
     message += `Имя: ${customerName}\n`;

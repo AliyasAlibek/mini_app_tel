@@ -677,6 +677,78 @@ async function handleWebhook(req, res) {
           parse_mode: 'HTML'
         });
       }
+
+      // Клиент принимает предложение
+      if (data.startsWith('accept_proposal_')) {
+        const orderId = data.replace('accept_proposal_', '');
+        
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+          callback_query_id: callbackQuery.id,
+          text: '✅ Отлично!'
+        });
+
+        const { data: order } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('id', orderId)
+          .single();
+
+        if (order) {
+          await supabase
+            .from('orders')
+            .update({ 
+              status: 'processing',
+              negotiation_status: 'accepted',
+              total: order.proposed_price || order.total
+            })
+            .eq('id', orderId);
+
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: chatId,
+            text: `✅ <b>Спасибо!</b>\n\nВаш заказ принят в работу!\n💰 Итоговая цена: ${order.proposed_price || order.total}₸`,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '💳 Подтвердить оплату', callback_data: `receipt_${orderId}` }
+              ]]
+            }
+          });
+
+          // Уведомляем админа
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: ADMIN_ID,
+            text: `✅ <b>Клиент принял предложение!</b>\n\n📋 Заказ #${orderId.slice(-6)}\n💰 Цена: ${order.proposed_price || order.total}₸`,
+            parse_mode: 'HTML'
+          });
+        }
+
+        return res.json({ ok: true });
+      }
+
+      // Клиент отменяет заказ
+      if (data.startsWith('cancel_order_')) {
+        const orderId = data.replace('cancel_order_', '');
+        
+        await supabase
+          .from('orders')
+          .update({ status: 'cancelled', negotiation_status: 'rejected' })
+          .eq('id', orderId);
+
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          chat_id: chatId,
+          text: `❌ <b>Заказ отменён</b>\n\nБудем рады видеть вас снова! 🎂`,
+          parse_mode: 'HTML'
+        });
+
+        // Уведомляем админа
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          chat_id: ADMIN_ID,
+          text: `❌ Клиент отменил заказ #${orderId.slice(-6)}`,
+          parse_mode: 'HTML'
+        });
+
+        return res.json({ ok: true });
+      }
     }
 
     // Обработка фото (чека)
@@ -814,6 +886,90 @@ async function setupWebhookOnStartup() {
     console.error(`❌ Ошибка при установке webhook:`, error.message);
   }
 }
+
+// ========== API ЭНДПОИНТЫ ДЛЯ СИСТЕМЫ СОГЛАСОВАНИЯ ==========
+
+// API: Подтвердить заказ как есть
+app.post('/api/confirm-order', async (req, res) => {
+  try {
+    const { orderId } = req.body;
+
+    const { data: order } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+    if (!order || !order.telegram_user_id) {
+      return res.status(404).json({ error: 'Заказ не найден' });
+    }
+
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: order.telegram_user_id,
+      text: `✅ <b>Отлично! Ваш заказ подтверждён!</b>\n\n🎂 Кастомный торт\n💰 Стоимость: ${order.total}₸\n\n📅 Готовность: 3 дня\n📞 Мы свяжемся с вами для уточнения деталей`,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '💳 Подтвердить оплату', callback_data: `receipt_${orderId}` }
+        ]]
+      }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Ошибка подтверждения заказа:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Предложить изменения
+app.post('/api/propose-changes', async (req, res) => {
+  try {
+    const { orderId, comment, newPrice, telegramUserId } = req.body;
+
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: telegramUserId,
+      text: `⚠️ <b>По вашему заказу есть уточнения</b>\n\n${comment}\n\n💰 Предлагаемая цена: ${newPrice}₸\n\nЧто выберете?`,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `✅ Согласен на ${newPrice}₸`, callback_data: `accept_proposal_${orderId}` }],
+          [{ text: '🎨 Хочу обсудить', url: `tg://user?id=${ADMIN_ID}` }],
+          [{ text: '❌ Отменить заказ', callback_data: `cancel_order_${orderId}` }]
+        ]
+      }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Ошибка отправки предложения:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Отклонить заказ
+app.post('/api/reject-order', async (req, res) => {
+  try {
+    const { orderId, reason, telegramUserId } = req.body;
+
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: telegramUserId,
+      text: `😔 <b>К сожалению...</b>\n\n${reason}\n\nНо мы можем предложить другие варианты! Наш менеджер свяжется с вами.`,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '📱 Связаться с менеджером', url: `tg://user?id=${ADMIN_ID}` },
+          { text: '🎂 Выбрать другой торт', web_app: { url: CLIENT_APP_URL } }
+        ]]
+      }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Ошибка отклонения заказа:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Запуск сервера
 app.listen(PORT, async () => {

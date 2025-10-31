@@ -125,50 +125,77 @@ app.post('/api/send-order', async (req, res) => {
       }
     }
 
-    // Если включены платежи, отправляем реквизиты клиенту
+    // Проверяем есть ли кастомный торт в заказе
+    const hasCustomCake = items.some(item => 
+      item.customDetails || 
+      item.customCake ||
+      item.name.includes('Торт на заказ') ||
+      item.name.includes('тапсырысқа торт')
+    );
+
+    // Если включены платежи, отправляем сообщение клиенту
     if (paymentEnabled && telegramUserId) {
-      let paymentMessage = "💳 <b>Реквизиты для оплаты / Төлем деректемелері</b>\n\n";
-      paymentMessage += `📋 Заказ / Тапсырыс #${orderId.slice(-6)}\n`;
-      paymentMessage += `💰 Сумма / Сомасы: <b>${total} ₸</b>\n\n`;
       
-      if (kaspiPhone) {
-        paymentMessage += `📱 <b>Kaspi номер:</b>\n+7${kaspiPhone}\n\n`;
-      }
-      
-      paymentMessage += "После оплаты нажмите кнопку ниже и отправьте скриншот чека.\n";
-      paymentMessage += "Төлегеннен кейін төмендегі батырманы басып, чектің скриншотын жіберіңіз.\n\n";
-      paymentMessage += "Спасибо за заказ! / Тапсырысыңызға рахмет! ❤️";
+      // Для кастомных тортов - отправляем сообщение о согласовании
+      if (hasCustomCake) {
+        let customMessage = "🎂 <b>Спасибо за заказ!</b>\n\n";
+        customMessage += `📋 Заказ / Тапсырыс #${orderId.slice(-6)}\n`;
+        customMessage += `💰 Предварительная сумма: <b>${total} ₸</b>\n\n`;
+        customMessage += "⏳ <b>Ваш заказ на согласовании</b>\n\n";
+        customMessage += "Мы проверяем детали вашего кастомного торта и свяжемся с вами в ближайшее время для подтверждения цены и деталей.\n\n";
+        customMessage += "🇰🇿 <b>Тапсырысыңыз келісімде</b>\n\n";
+        customMessage += "Біз сіздің торттың деталдарын тексеріп жатырмыз және бағаны және деталдарды растау үшін жақын арада сізбен байланысамыз.";
 
-      const keyboard = {
-        inline_keyboard: []
-      };
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          chat_id: telegramUserId,
+          text: customMessage,
+          parse_mode: 'HTML'
+        });
+      } else {
+        // Для обычных заказов - отправляем реквизиты с кнопкой оплаты
+        let paymentMessage = "💳 <b>Реквизиты для оплаты / Төлем деректемелері</b>\n\n";
+        paymentMessage += `📋 Заказ / Тапсырыс #${orderId.slice(-6)}\n`;
+        paymentMessage += `💰 Сумма / Сомасы: <b>${total} ₸</b>\n\n`;
+        
+        if (kaspiPhone) {
+          paymentMessage += `📱 <b>Kaspi номер:</b>\n+7${kaspiPhone}\n\n`;
+        }
+        
+        paymentMessage += "После оплаты нажмите кнопку ниже и отправьте скриншот чека.\n";
+        paymentMessage += "Төлегеннен кейін төмендегі батырманы басып, чектің скриншотын жіберіңіз.\n\n";
+        paymentMessage += "Спасибо за заказ! / Тапсырысыңызға рахмет! ❤️";
 
-      // Кнопка Kaspi если есть ссылка
-      if (kaspiLink) {
+        const keyboard = {
+          inline_keyboard: []
+        };
+
+        // Кнопка Kaspi если есть ссылка
+        if (kaspiLink) {
+          keyboard.inline_keyboard.push([
+            { text: "💳 Оплатить через Kaspi", url: kaspiLink }
+          ]);
+        }
+
+        // ГЛАВНАЯ КНОПКА - отправить чек
         keyboard.inline_keyboard.push([
-          { text: "💳 Оплатить через Kaspi", url: kaspiLink }
+          { text: "📤 Подтвердить оплату", callback_data: `receipt_${orderId}` }
         ]);
+
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          chat_id: telegramUserId,
+          text: paymentMessage,
+          parse_mode: 'HTML',
+          reply_markup: keyboard
+        });
+
+        // Сохраняем связь orderId -> userId для обработки чека
+        pendingReceipts.set(orderId, {
+          userId: telegramUserId,
+          orderNumber: orderId.slice(-6),
+          total: total,
+          customerName: customerName
+        });
       }
-
-      // ГЛАВНАЯ КНОПКА - отправить чек
-      keyboard.inline_keyboard.push([
-        { text: "📤 Подтвердить оплату", callback_data: `receipt_${orderId}` }
-      ]);
-
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        chat_id: telegramUserId,
-        text: paymentMessage,
-        parse_mode: 'HTML',
-        reply_markup: keyboard
-      });
-
-      // Сохраняем связь orderId -> userId для обработки чека
-      pendingReceipts.set(orderId, {
-        userId: telegramUserId,
-        orderNumber: orderId.slice(-6),
-        total: total,
-        customerName: customerName
-      });
     }
 
     res.json({ success: true, message: 'Заказ успешно отправлен' });
@@ -904,15 +931,53 @@ app.post('/api/confirm-order', async (req, res) => {
       return res.status(404).json({ error: 'Заказ не найден' });
     }
 
+    // Получаем настройки для реквизитов
+    const { data: settings } = await supabase
+      .from('settings')
+      .select('*')
+      .single();
+
+    const kaspiPhone = settings?.kaspi_phone || '';
+    const kaspiLink = settings?.kaspi_link || '';
+
+    let confirmMessage = "✅ <b>Отлично! Ваш заказ подтверждён!</b>\n\n";
+    confirmMessage += "🎂 Кастомный торт\n";
+    confirmMessage += `💰 Стоимость: ${order.total}₸\n\n`;
+    
+    if (kaspiPhone) {
+      confirmMessage += `📱 <b>Kaspi номер для оплаты:</b>\n+7${kaspiPhone}\n\n`;
+    }
+    
+    confirmMessage += "После оплаты нажмите кнопку ниже и отправьте скриншот чека.\n\n";
+    confirmMessage += "Спасибо! ❤️";
+
+    const keyboard = {
+      inline_keyboard: []
+    };
+
+    if (kaspiLink) {
+      keyboard.inline_keyboard.push([
+        { text: "💳 Оплатить через Kaspi", url: kaspiLink }
+      ]);
+    }
+
+    keyboard.inline_keyboard.push([
+      { text: '📤 Подтвердить оплату', callback_data: `receipt_${orderId}` }
+    ]);
+
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       chat_id: order.telegram_user_id,
-      text: `✅ <b>Отлично! Ваш заказ подтверждён!</b>\n\n🎂 Кастомный торт\n💰 Стоимость: ${order.total}₸\n\n📅 Готовность: 3 дня\n📞 Мы свяжемся с вами для уточнения деталей`,
+      text: confirmMessage,
       parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '💳 Подтвердить оплату', callback_data: `receipt_${orderId}` }
-        ]]
-      }
+      reply_markup: keyboard
+    });
+
+    // Сохраняем связь для обработки чека
+    pendingReceipts.set(orderId, {
+      userId: order.telegram_user_id,
+      orderNumber: orderId.slice(-6),
+      total: order.total,
+      customerName: order.customer_name
     });
 
     res.json({ success: true });

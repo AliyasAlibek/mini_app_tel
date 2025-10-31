@@ -313,7 +313,9 @@
         return order.items.some(item => 
           item.customCake || 
           item.name.includes('Кастомный') || 
-          item.name.includes('Тапсырысқа')
+          item.name.includes('Тапсырысқа') ||
+          item.name.includes('Торт на заказ') ||
+          item.name.includes('тапсырысқа торт')
         );
       };
 

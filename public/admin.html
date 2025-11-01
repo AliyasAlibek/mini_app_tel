@@ -64,6 +64,9 @@
       const [negotiationModal, setNegotiationModal] = useState(null);
       const [negotiationPrice, setNegotiationPrice] = useState('');
       const [negotiationComment, setNegotiationComment] = useState('');
+      
+      // Модальное окно для просмотра фото
+      const [photoModal, setPhotoModal] = useState(null);
 
       useEffect(() => {
         if (window.Telegram?.WebApp) {
@@ -98,34 +101,6 @@
         }
       };
 
-      const saveSettings = async () => {
-        try {
-          const { data: existing } = await supabase
-            .from('settings')
-            .select('id')
-            .limit(1)
-            .single();
-
-          if (existing) {
-            const { error } = await supabase
-              .from('settings')
-              .update(settings)
-              .eq('id', existing.id);
-            if (error) throw error;
-          } else {
-            const { error } = await supabase
-              .from('settings')
-              .insert([settings]);
-            if (error) throw error;
-          }
-          
-          alert('✅ Настройки сохранены!');
-        } catch (error) {
-          console.error('Ошибка сохранения настроек:', error);
-          alert('❌ Ошибка сохранения настроек');
-        }
-      };
-
       const loadProducts = async () => {
         try {
           const { data, error } = await supabase
@@ -145,68 +120,12 @@
           const { data, error } = await supabase
             .from('orders')
             .select('*')
-            .order('created_at', { ascending: false});
+            .order('date', { ascending: false });
 
           if (error) throw error;
           setOrders(data || []);
         } catch (error) {
           console.error('Ошибка загрузки заказов:', error);
-        }
-      };
-
-      const handleSaveProduct = async () => {
-        if (!productForm.name || !productForm.price || !productForm.category) {
-          alert('Заполните обязательные поля (RU): название, цена, категория');
-          return;
-        }
-        
-        const productData = {
-          name: productForm.name,
-          name_kk: productForm.name_kk || productForm.name,
-          description: productForm.description,
-          description_kk: productForm.description_kk || productForm.description,
-          price: parseFloat(productForm.price),
-          category: productForm.category,
-          category_kk: productForm.category_kk || productForm.category,
-          image: productForm.image || 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400'
-        };
-
-        try {
-          if (editingProduct) {
-            const { error } = await supabase
-              .from('products')
-              .update(productData)
-              .eq('id', editingProduct.id);
-            if (error) throw error;
-          } else {
-            const { error } = await supabase
-              .from('products')
-              .insert([productData]);
-            if (error) throw error;
-          }
-          
-          await loadProducts();
-          resetForm();
-        } catch (error) {
-          console.error('Ошибка сохранения товара:', error);
-          alert('Ошибка сохранения товара');
-        }
-      };
-
-      const handleDeleteProduct = async (id) => {
-        if (confirm('Удалить этот товар?')) {
-          try {
-            const { error } = await supabase
-              .from('products')
-              .delete()
-              .eq('id', id);
-            
-            if (error) throw error;
-            await loadProducts();
-          } catch (error) {
-            console.error('Ошибка удаления товара:', error);
-            alert('Ошибка удаления товара');
-          }
         }
       };
 
@@ -216,12 +135,59 @@
             .from('products')
             .update({ available: !currentStatus })
             .eq('id', productId);
-          
+
           if (error) throw error;
+          
           await loadProducts();
+          alert('✅ Статус товара обновлён');
         } catch (error) {
-          console.error('Ошибка изменения доступности:', error);
-          alert('Ошибка изменения доступности товара');
+          console.error('Ошибка обновления статуса:', error);
+          alert('❌ Ошибка обновления статуса');
+        }
+      };
+
+      const updateOrderStatus = async (orderId, newStatus) => {
+        try {
+          const { error } = await supabase
+            .from('orders')
+            .update({ status: newStatus })
+            .eq('id', orderId);
+
+          if (error) throw error;
+
+          const order = orders.find(o => o.id === orderId);
+          if (order?.telegram_user_id) {
+            await fetch(`${API_URL}/api/notify-status`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                orderId,
+                status: newStatus,
+                telegramUserId: order.telegram_user_id
+              })
+            });
+          }
+
+          await loadOrders();
+          alert('✅ Статус заказа обновлён');
+        } catch (error) {
+          console.error('Ошибка обновления статуса:', error);
+          alert('❌ Ошибка при обновлении статуса');
+        }
+      };
+
+      const saveSettings = async () => {
+        try {
+          const { error } = await supabase
+            .from('settings')
+            .update(settings)
+            .eq('id', settings.id);
+
+          if (error) throw error;
+          alert('✅ Настройки сохранены');
+        } catch (error) {
+          console.error('Ошибка сохранения:', error);
+          alert('❌ Ошибка при сохранении настроек');
         }
       };
 
@@ -230,9 +196,9 @@
         setProductForm({
           name: product.name,
           name_kk: product.name_kk || '',
-          description: product.description,
+          description: product.description || '',
           description_kk: product.description_kk || '',
-          price: product.price.toString(),
+          price: product.price,
           category: product.category,
           category_kk: product.category_kk || '',
           image: product.image
@@ -240,83 +206,86 @@
         setShowProductForm(true);
       };
 
-      const resetForm = () => {
-        setProductForm({ 
-          name: '', 
-          name_kk: '', 
-          description: '', 
-          description_kk: '',
-          price: '', 
-          category: '', 
-          category_kk: '',
-          image: '' 
-        });
-        setEditingProduct(null);
-        setShowProductForm(false);
-      };
-
-      const sendStatusNotification = async (order, newStatus) => {
-        if (!order.telegram_user_id) return;
+      const handleSaveProduct = async () => {
+        if (!productForm.name || !productForm.price || !productForm.category) {
+          alert('❌ Заполните все обязательные поля');
+          return;
+        }
 
         try {
-          await fetch(`${API_URL}/api/notify-status`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userId: order.telegram_user_id,
-              status: newStatus,
-              orderNumber: order.id.slice(-6),
-              shopPhone: settings?.shop_phone || ''
-            })
-          });
+          const productData = {
+            name: productForm.name,
+            name_kk: productForm.name_kk || productForm.name,
+            description: productForm.description,
+            description_kk: productForm.description_kk || productForm.description,
+            price: parseInt(productForm.price),
+            category: productForm.category,
+            category_kk: productForm.category_kk || productForm.category,
+            image: productForm.image,
+            available: true
+          };
+
+          if (editingProduct) {
+            const { error } = await supabase
+              .from('products')
+              .update(productData)
+              .eq('id', editingProduct.id);
+            if (error) throw error;
+          } else {
+            productData.id = 'prod_' + Date.now();
+            const { error } = await supabase
+              .from('products')
+              .insert([productData]);
+            if (error) throw error;
+          }
+
+          alert('✅ Товар сохранён');
+          resetForm();
+          await loadProducts();
         } catch (error) {
-          console.error('Ошибка отправки уведомления клиенту:', error);
+          console.error('Ошибка сохранения товара:', error);
+          alert('❌ Ошибка при сохранении товара');
         }
       };
 
-      const updateOrderStatus = async (orderId, newStatus) => {
+      const handleDeleteProduct = async (productId) => {
+        if (!confirm('❓ Удалить этот товар?')) return;
+
         try {
-          const order = orders.find(o => o.id === orderId);
-          if (!order) return;
-
-          await loadSettings();
-
           const { error } = await supabase
-            .from('orders')
-            .update({ status: newStatus })
-            .eq('id', orderId);
+            .from('products')
+            .delete()
+            .eq('id', productId);
 
           if (error) throw error;
-
-          await sendStatusNotification(order, newStatus);
-
-          setOrders(orders.map(o => 
-            o.id === orderId ? { ...o, status: newStatus } : o
-          ));
-
-          const statusText = {
-            'processing': 'в работу',
-            'completed': 'выполнен',
-            'cancelled': 'отменён'
-          };
-          
-          alert(`✅ Заказ переведён в статус "${statusText[newStatus]}"\n${order.telegram_user_id ? 'Клиенту отправлено уведомление 📱' : ''}`);
-
+          alert('✅ Товар удалён');
+          await loadProducts();
         } catch (error) {
-          console.error('Ошибка обновления статуса:', error);
-          alert('Ошибка обновления статуса');
+          console.error('Ошибка удаления:', error);
+          alert('❌ Ошибка при удалении товара');
         }
       };
 
-      // Функции системы согласования
+      const resetForm = () => {
+        setShowProductForm(false);
+        setEditingProduct(null);
+        setProductForm({
+          name: '',
+          name_kk: '',
+          description: '',
+          description_kk: '',
+          price: '',
+          category: '',
+          category_kk: '',
+          image: ''
+        });
+      };
+
       const isCustomCake = (order) => {
         return order.items.some(item => 
+          item.customDetails || 
           item.customCake || 
-          item.customDetails ||                    // ← ДОБАВЛЕНО!
-          item.name.includes('Кастомный') || 
-          item.name.includes('Тапсырысқа') ||
-          item.name.includes('Торт на заказ') ||
-          item.name.includes('тапсырысқа торт')
+          item.name.toLowerCase().includes('торт на заказ')
         );
       };
 
@@ -333,22 +302,31 @@
       };
 
       const confirmOrderAsIs = async (orderId) => {
+        if (!confirm('✅ Подтвердить заказ без изменений?')) return;
+
         try {
           await supabase
             .from('orders')
             .update({ 
               status: 'processing',
-              negotiation_status: 'confirmed'
+              negotiation_status: 'approved'
             })
             .eq('id', orderId);
 
-          await fetch(`${API_URL}/api/confirm-order`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderId })
-          });
+          const order = orders.find(o => o.id === orderId);
+          if (order?.telegram_user_id && settings.payment_enabled) {
+            await fetch(`${API_URL}/api/send-payment-button`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                orderId: order.id,
+                total: order.total,
+                telegramUserId: order.telegram_user_id
+              })
+            });
+          }
 
-          alert('✅ Заказ подтверждён!');
+          alert('✅ Заказ подтверждён');
           loadOrders();
         } catch (error) {
           console.error('Ошибка подтверждения:', error);
@@ -358,7 +336,13 @@
 
       const proposeChanges = async () => {
         if (!negotiationComment.trim()) {
-          alert('Напишите комментарий для клиента');
+          alert('❌ Введите сообщение для клиента');
+          return;
+        }
+
+        const newPrice = parseInt(negotiationPrice);
+        if (isNaN(newPrice) || newPrice <= 0) {
+          alert('❌ Введите корректную цену');
           return;
         }
 
@@ -367,9 +351,8 @@
             .from('orders')
             .update({ 
               admin_comment: negotiationComment,
-              proposed_price: parseInt(negotiationPrice) || negotiationModal.total,
-              negotiation_status: 'pending',
-              status: 'negotiation'
+              proposed_price: newPrice,
+              negotiation_status: 'pending_client'
             })
             .eq('id', negotiationModal.id);
 
@@ -378,13 +361,13 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               orderId: negotiationModal.id,
-              comment: negotiationComment,
-              newPrice: parseInt(negotiationPrice) || negotiationModal.total,
+              proposedPrice: newPrice,
+              adminComment: negotiationComment,
               telegramUserId: negotiationModal.telegram_user_id
             })
           });
 
-          alert('✅ Предложение отправлено клиенту!');
+          alert('✅ Предложение отправлено клиенту');
           closeNegotiationModal();
           loadOrders();
         } catch (error) {
@@ -395,7 +378,11 @@
 
       const rejectOrder = async () => {
         if (!negotiationComment.trim()) {
-          alert('Напишите причину отклонения');
+          alert('❌ Укажите причину отклонения');
+          return;
+        }
+
+        if (!confirm('❌ Отклонить заказ?')) {
           return;
         }
 
@@ -448,6 +435,37 @@
           case 'cancelled': return 'Отменён';
           default: return status;
         }
+      };
+
+      // Функция для получения всех фото из заказа
+      const getOrderPhotos = (order) => {
+        const photos = [];
+        order.items.forEach(item => {
+          if (item.customCake?.referencePhoto) {
+            photos.push({
+              url: item.customCake.referencePhoto,
+              itemName: item.name,
+              type: 'Референс торта'
+            });
+          }
+          if (item.customDetails?.customDecorImage) {
+            photos.push({
+              url: item.customDetails.customDecorImage,
+              itemName: item.name,
+              type: 'Референс декора'
+            });
+          }
+        });
+        return photos;
+      };
+
+      // Открытие модального окна с фото
+      const openPhotoModal = (photoUrl, title) => {
+        setPhotoModal({ url: photoUrl, title: title });
+      };
+
+      const closePhotoModal = () => {
+        setPhotoModal(null);
       };
 
       // Фильтрация заказов
@@ -645,104 +663,157 @@
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {filteredOrders.map(order => (
-                    <div key={order.id} className="bg-white rounded-lg p-4 shadow-sm">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <p className="font-bold text-gray-800">Заказ #{order.id.slice(-6)}</p>
-                          <p className="text-xs text-gray-500">{new Date(order.date).toLocaleString('ru-RU')}</p>
-                        </div>
-                        <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(order.status)}`}>
-                          {getStatusText(order.status)}
-                        </span>
-                      </div>
-                      
-                      <div className="border-t pt-3 mb-3">
-                        <p className="text-sm font-medium text-gray-700 mb-1">Клиент:</p>
-                        <p className="text-sm text-gray-600">{order.customer_name}</p>
-                        <p className="text-sm text-gray-600">{order.customer_phone}</p>
-                        {order.telegram_username && (
-                          <p className="text-sm text-blue-600">@{order.telegram_username}</p>
-                        )}
-                        {order.customer_comment && (
-                          <p className="text-sm text-gray-600 mt-1 italic">{order.customer_comment}</p>
-                        )}
-                      </div>
-                      
-                      <div className="border-t pt-3 mb-3">
-                        <p className="text-sm font-medium text-gray-700 mb-2">Товары:</p>
-                        {order.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between text-sm mb-1">
-                            <span>{item.name} x{item.quantity}</span>
-                            <span className="font-medium">{item.price * item.quantity} ₸</span>
+                  {filteredOrders.map(order => {
+                    const orderPhotos = getOrderPhotos(order);
+                    
+                    return (
+                      <div key={order.id} className="bg-white rounded-lg p-4 shadow-sm">
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <p className="font-bold text-gray-800">Заказ #{order.id.slice(-6)}</p>
+                            <p className="text-xs text-gray-500">{new Date(order.date).toLocaleString('ru-RU')}</p>
                           </div>
-                        ))}
-                        <div className="border-t mt-2 pt-2 flex justify-between font-bold">
-                          <span>Итого:</span>
-                          <span className="text-indigo-600">{order.total} ₸</span>
+                          <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(order.status)}`}>
+                            {getStatusText(order.status)}
+                          </span>
                         </div>
-                      </div>
-                      
-                      {/* Блок согласования для кастомных тортов */}
-                      {isCustomCake(order) && (order.status === 'new' || order.status === 'pending_payment') && (
-                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
-                          <p className="text-sm font-medium text-yellow-800 mb-2">
-                            🎂 Кастомный торт - требуется согласование
-                          </p>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => confirmOrderAsIs(order.id)}
-                              className="flex-1 py-2 px-3 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600"
-                            >
-                              ✅ Подтвердить как есть
-                            </button>
-                            <button
-                              onClick={() => openNegotiationModal(order)}
-                              className="flex-1 py-2 px-3 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
-                            >
-                              ✏️ Предложить изменения
-                            </button>
+                        
+                        <div className="border-t pt-3 mb-3">
+                          <p className="text-sm font-medium text-gray-700 mb-1">Клиент:</p>
+                          <p className="text-sm text-gray-600">{order.customer_name}</p>
+                          <p className="text-sm text-gray-600">{order.customer_phone}</p>
+                          {order.telegram_username && (
+                            <p className="text-sm text-blue-600">@{order.telegram_username}</p>
+                          )}
+                          {order.customer_comment && (
+                            <p className="text-sm text-gray-600 mt-1 italic">{order.customer_comment}</p>
+                          )}
+                        </div>
+                        
+                        <div className="border-t pt-3 mb-3">
+                          <p className="text-sm font-medium text-gray-700 mb-2">Товары:</p>
+                          {order.items.map((item, idx) => (
+                            <div key={idx} className="mb-3">
+                              <div className="flex justify-between text-sm mb-1">
+                                <span>{item.name} x{item.quantity}</span>
+                                <span className="font-medium">{item.price * item.quantity} ₸</span>
+                              </div>
+                              
+                              {/* Детали кастомного торта */}
+                              {(item.customCake || item.customDetails) && (
+                                <div className="ml-3 mt-2 text-xs text-gray-600 space-y-1">
+                                  {item.customCake && (
+                                    <>
+                                      <p>🎂 Ярусов: {item.customCake.tiers}</p>
+                                      <p>⚖️ Вес: {item.customCake.weight} кг</p>
+                                      <p>🍰 Начинка: {item.customCake.filling}</p>
+                                      <p>🎨 Крем: {item.customCake.cream}</p>
+                                      {item.customCake.topper && <p>🎀 Топпер: Да</p>}
+                                    </>
+                                  )}
+                                  {item.customDetails && (
+                                    <>
+                                      <p>📏 Размер: {item.customDetails.sizeName || item.customDetails.size}</p>
+                                      <p>🍰 Начинка: {item.customDetails.fillingName || item.customDetails.filling}</p>
+                                      <p>🎨 Декор: {item.customDetails.decorName || item.customDetails.decor}</p>
+                                      {item.customDetails.customDecorComment && (
+                                        <p>💬 Комментарий: {item.customDetails.customDecorComment}</p>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          <div className="border-t mt-2 pt-2 flex justify-between font-bold">
+                            <span>Итого:</span>
+                            <span className="text-indigo-600">{order.total} ₸</span>
                           </div>
                         </div>
-                      )}
-                      
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => updateOrderStatus(order.id, 'processing')}
-                          disabled={order.status === 'processing'}
-                          className={`flex-1 py-2 rounded text-xs font-medium ${
-                            order.status === 'processing' 
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                              : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
-                          }`}
-                        >
-                          ⏳ В работу
-                        </button>
-                        <button
-                          onClick={() => updateOrderStatus(order.id, 'completed')}
-                          disabled={order.status === 'completed'}
-                          className={`flex-1 py-2 rounded text-xs font-medium ${
-                            order.status === 'completed'
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                              : 'bg-green-50 text-green-700 hover:bg-green-100'
-                          }`}
-                        >
-                          ✅ Выполнен
-                        </button>
-                        <button
-                          onClick={() => updateOrderStatus(order.id, 'cancelled')}
-                          disabled={order.status === 'cancelled'}
-                          className={`flex-1 py-2 rounded text-xs font-medium ${
-                            order.status === 'cancelled'
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                              : 'bg-red-50 text-red-700 hover:bg-red-100'
-                          }`}
-                        >
-                          ❌ Отменить
-                        </button>
+                        
+                        {/* Превью фото референсов */}
+                        {orderPhotos.length > 0 && (
+                          <div className="border-t pt-3 mb-3">
+                            <p className="text-sm font-medium text-gray-700 mb-2">📸 Фото референсов:</p>
+                            <div className="flex gap-2 flex-wrap">
+                              {orderPhotos.map((photo, idx) => (
+                                <div key={idx} className="relative">
+                                  <img
+                                    src={photo.url}
+                                    alt={photo.type}
+                                    className="w-24 h-24 object-cover rounded-lg cursor-pointer hover:opacity-80 transition"
+                                    onClick={() => openPhotoModal(photo.url, `${photo.itemName} - ${photo.type}`)}
+                                  />
+                                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-[10px] px-1 py-0.5 rounded-b-lg text-center">
+                                    {photo.type}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Блок согласования для кастомных тортов */}
+                        {isCustomCake(order) && (order.status === 'new' || order.status === 'pending_payment') && (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+                            <p className="text-sm font-medium text-yellow-800 mb-2">
+                              🎂 Кастомный торт - требуется согласование
+                            </p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => confirmOrderAsIs(order.id)}
+                                className="flex-1 py-2 px-3 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600"
+                              >
+                                ✅ Подтвердить как есть
+                              </button>
+                              <button
+                                onClick={() => openNegotiationModal(order)}
+                                className="flex-1 py-2 px-3 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
+                              >
+                                ✏️ Предложить изменения
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => updateOrderStatus(order.id, 'processing')}
+                            disabled={order.status === 'processing'}
+                            className={`flex-1 py-2 rounded text-xs font-medium ${
+                              order.status === 'processing' 
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                            }`}
+                          >
+                            ⏳ В работу
+                          </button>
+                          <button
+                            onClick={() => updateOrderStatus(order.id, 'completed')}
+                            disabled={order.status === 'completed'}
+                            className={`flex-1 py-2 rounded text-xs font-medium ${
+                              order.status === 'completed'
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-green-50 text-green-700 hover:bg-green-100'
+                            }`}
+                          >
+                            ✅ Выполнен
+                          </button>
+                          <button
+                            onClick={() => updateOrderStatus(order.id, 'cancelled')}
+                            disabled={order.status === 'cancelled'}
+                            className={`flex-1 py-2 rounded text-xs font-medium ${
+                              order.status === 'cancelled'
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-red-50 text-red-700 hover:bg-red-100'
+                            }`}
+                          >
+                            ❌ Отменить
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -850,102 +921,101 @@
                     Заполните поля на русском (обязательно) и казахском (опционально). Если казахский не заполнен, будет использоваться русский текст.
                   </p>
                 </div>
-
+                
                 <div className="space-y-4">
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <h3 className="font-bold mb-3 text-gray-700">🇷🇺 Русский (обязательно)</h3>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Название *</label>
-                        <input 
-                          type="text" 
-                          value={productForm.name} 
-                          onChange={(e) => setProductForm({...productForm, name: e.target.value})} 
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
-                          placeholder="Торт Наполеон" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Описание</label>
-                        <textarea 
-                          value={productForm.description} 
-                          onChange={(e) => setProductForm({...productForm, description: e.target.value})} 
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
-                          rows="2" 
-                          placeholder="Классический торт с заварным кремом" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Категория *</label>
-                        <input 
-                          type="text" 
-                          value={productForm.category} 
-                          onChange={(e) => setProductForm({...productForm, category: e.target.value})} 
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
-                          placeholder="Торты" 
-                        />
-                      </div>
-                    </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Название (RU) *</label>
+                    <input 
+                      type="text" 
+                      value={productForm.name}
+                      onChange={(e) => setProductForm({...productForm, name: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
+                      placeholder="Торт Наполеон"
+                    />
                   </div>
 
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <h3 className="font-bold mb-3 text-gray-700">🇰🇿 Қазақша (опционально)</h3>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Атауы</label>
-                        <input 
-                          type="text" 
-                          value={productForm.name_kk} 
-                          onChange={(e) => setProductForm({...productForm, name_kk: e.target.value})} 
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
-                          placeholder="Наполеон торты" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Сипаттама</label>
-                        <textarea 
-                          value={productForm.description_kk} 
-                          onChange={(e) => setProductForm({...productForm, description_kk: e.target.value})} 
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
-                          rows="2" 
-                          placeholder="Кілегей кремді классикалық торт" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Санат</label>
-                        <input 
-                          type="text" 
-                          value={productForm.category_kk} 
-                          onChange={(e) => setProductForm({...productForm, category_kk: e.target.value})} 
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
-                          placeholder="Торттар" 
-                        />
-                      </div>
-                    </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Атауы (KK)</label>
+                    <input 
+                      type="text" 
+                      value={productForm.name_kk}
+                      onChange={(e) => setProductForm({...productForm, name_kk: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
+                      placeholder="Наполеон торты"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Описание (RU)</label>
+                    <textarea 
+                      value={productForm.description}
+                      onChange={(e) => setProductForm({...productForm, description: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
+                      rows="2"
+                      placeholder="Классический слоёный торт"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Сипаттама (KK)</label>
+                    <textarea 
+                      value={productForm.description_kk}
+                      onChange={(e) => setProductForm({...productForm, description_kk: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
+                      rows="2"
+                      placeholder="Классикалық қабаттас торт"
+                    />
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Цена (₸) *</label>
                     <input 
                       type="number" 
-                      value={productForm.price} 
-                      onChange={(e) => setProductForm({...productForm, price: e.target.value})} 
+                      value={productForm.price}
+                      onChange={(e) => setProductForm({...productForm, price: e.target.value})}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
-                      placeholder="2500" 
+                      placeholder="5000"
                     />
                   </div>
-                  
+
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">URL изображения</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Категория (RU) *</label>
                     <input 
                       type="text" 
-                      value={productForm.image} 
-                      onChange={(e) => setProductForm({...productForm, image: e.target.value})} 
+                      value={productForm.category}
+                      onChange={(e) => setProductForm({...productForm, category: e.target.value})}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
-                      placeholder="https://..." 
+                      placeholder="Торты"
                     />
                   </div>
-                  
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Санат (KK)</label>
+                    <input 
+                      type="text" 
+                      value={productForm.category_kk}
+                      onChange={(e) => setProductForm({...productForm, category_kk: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
+                      placeholder="Торттар"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">URL изображения *</label>
+                    <input 
+                      type="text" 
+                      value={productForm.image}
+                      onChange={(e) => setProductForm({...productForm, image: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg" 
+                      placeholder="https://..."
+                    />
+                    {productForm.image && (
+                      <div className="mt-2">
+                        <img src={productForm.image} alt="Preview" className="w-32 h-32 object-cover rounded-lg" />
+                      </div>
+                    )}
+                  </div>
+
                   <button 
                     onClick={handleSaveProduct} 
                     className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium"
@@ -995,7 +1065,8 @@
                                     <img 
                                       src={item.customCake.referencePhoto} 
                                       alt="Референс" 
-                                      className="w-32 h-32 object-cover rounded"
+                                      className="w-32 h-32 object-cover rounded cursor-pointer hover:opacity-80 transition"
+                                      onClick={() => openPhotoModal(item.customCake.referencePhoto, 'Референс торта')}
                                     />
                                   </div>
                                 )}
@@ -1012,7 +1083,8 @@
                                     <img 
                                       src={item.customDetails.customDecorImage} 
                                       alt="Референс" 
-                                      className="w-32 h-32 object-cover rounded"
+                                      className="w-32 h-32 object-cover rounded cursor-pointer hover:opacity-80 transition"
+                                      onClick={() => openPhotoModal(item.customDetails.customDecorImage, 'Референс декора')}
                                     />
                                   </div>
                                 )}
@@ -1078,6 +1150,38 @@
                         Отмена
                       </button>
                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Модальное окно для просмотра фото */}
+          {photoModal && (
+            <div 
+              className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]"
+              onClick={closePhotoModal}
+            >
+              <div className="relative max-w-4xl w-full">
+                <button
+                  onClick={closePhotoModal}
+                  className="absolute top-4 right-4 text-white bg-black/50 hover:bg-black/70 rounded-full w-10 h-10 flex items-center justify-center text-2xl z-10"
+                >
+                  ×
+                </button>
+                <div className="bg-white rounded-lg overflow-hidden">
+                  {photoModal.title && (
+                    <div className="bg-gray-100 px-4 py-3 border-b">
+                      <p className="font-medium text-gray-800">{photoModal.title}</p>
+                    </div>
+                  )}
+                  <div className="p-4 flex items-center justify-center bg-gray-50">
+                    <img
+                      src={photoModal.url}
+                      alt={photoModal.title}
+                      className="max-w-full max-h-[80vh] object-contain"
+                      onClick={(e) => e.stopPropagation()}
+                    />
                   </div>
                 </div>
               </div>

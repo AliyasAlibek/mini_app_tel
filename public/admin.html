@@ -188,32 +188,16 @@
           // Загружаем только нужные поля (не все!)
           const { data, error } = await supabase
             .from('orders')
-            .select('id, date, created_at, customer_name, customer_phone, customer_comment, telegram_user_id, telegram_username, items, total, status, admin_comment, proposed_price, negotiation_status')
+            .select('id, created_at, customer_name, customer_phone, customer_comment, telegram_user_id, telegram_username, items, total, status, admin_comment, proposed_price, negotiation_status')
             .order('created_at', { ascending: false })
             .range(from, to);
 
-          if (error) {
-            console.error('Ошибка загрузки заказов:', error);
-            // Пробуем с полем date если created_at не существует
-            const { data: data2, error: error2 } = await supabase
-              .from('orders')
-              .select('id, date, customer_name, customer_phone, customer_comment, telegram_user_id, telegram_username, items, total, status, admin_comment, proposed_price, negotiation_status')
-              .order('date', { ascending: false })
-              .range(from, to);
-            
-            if (error2) throw error2;
-            
-            if (page === 1) {
-              setOrders(data2 || []);
-            } else {
-              setOrders(prev => [...prev, ...(data2 || [])]);
-            }
+          if (error) throw error;
+          
+          if (page === 1) {
+            setOrders(data || []);
           } else {
-            if (page === 1) {
-              setOrders(data || []);
-            } else {
-              setOrders(prev => [...prev, ...(data || [])]);
-            }
+            setOrders(prev => [...prev, ...(data || [])]);
           }
         } catch (error) {
           console.error('Критическая ошибка загрузки заказов:', error);
@@ -796,7 +780,7 @@
                         <div className="flex items-start justify-between mb-3">
                           <div>
                             <p className="font-bold text-gray-800">Заказ #{order.id.slice(-6)}</p>
-                            <p className="text-xs text-gray-500">{new Date(order.date).toLocaleString('ru-RU')}</p>
+                            <p className="text-xs text-gray-500">{new Date(order.created_at).toLocaleString('ru-RU')}</p>
                           </div>
                           <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(order.status)}`}>
                             {getStatusText(order.status)}

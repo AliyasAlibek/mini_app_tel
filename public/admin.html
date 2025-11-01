@@ -29,7 +29,13 @@
     const API_URL = window.location.origin;
     const ADMIN_ID = 8086901919;
     
+    console.log('🔧 Конфигурация админ-панели:');
+    console.log('- Supabase URL:', SUPABASE_URL);
+    console.log('- API URL:', API_URL);
+    console.log('- Admin ID:', ADMIN_ID);
+    
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log('✅ Supabase клиент создан');
 
     const AdminPanel = () => {
       const [activeTab, setActiveTab] = useState('products');
@@ -78,11 +84,21 @@
       }, []);
 
       const loadData = async () => {
+        console.log('🔄 Начинаем загрузку данных...');
         setLoading(true);
-        await loadProducts();
-        await loadOrders();
-        await loadSettings();
-        setLoading(false);
+        try {
+          await loadProducts();
+          console.log('✅ Товары загружены');
+          await loadOrders();
+          console.log('✅ Заказы загружены');
+          await loadSettings();
+          console.log('✅ Настройки загружены');
+        } catch (error) {
+          console.error('❌ Ошибка при загрузке данных:', error);
+        } finally {
+          setLoading(false);
+          console.log('✅ Загрузка завершена');
+        }
       };
 
       const loadSettings = async () => {
@@ -120,12 +136,24 @@
           const { data, error } = await supabase
             .from('orders')
             .select('*')
-            .order('date', { ascending: false });
+            .order('created_at', { ascending: false });
 
-          if (error) throw error;
-          setOrders(data || []);
+          if (error) {
+            console.error('Ошибка загрузки заказов:', error);
+            // Пробуем с полем date если created_at не существует
+            const { data: data2, error: error2 } = await supabase
+              .from('orders')
+              .select('*')
+              .order('date', { ascending: false });
+            
+            if (error2) throw error2;
+            setOrders(data2 || []);
+          } else {
+            setOrders(data || []);
+          }
         } catch (error) {
-          console.error('Ошибка загрузки заказов:', error);
+          console.error('Критическая ошибка загрузки заказов:', error);
+          alert('❌ Ошибка подключения к базе данных. Проверьте консоль.');
         }
       };
 
@@ -178,16 +206,29 @@
 
       const saveSettings = async () => {
         try {
-          const { error } = await supabase
+          const { data: existing } = await supabase
             .from('settings')
-            .update(settings)
-            .eq('id', settings.id);
+            .select('id')
+            .limit(1)
+            .single();
 
-          if (error) throw error;
-          alert('✅ Настройки сохранены');
+          if (existing) {
+            const { error } = await supabase
+              .from('settings')
+              .update(settings)
+              .eq('id', existing.id);
+            if (error) throw error;
+          } else {
+            const { error } = await supabase
+              .from('settings')
+              .insert([settings]);
+            if (error) throw error;
+          }
+          
+          alert('✅ Настройки сохранены!');
         } catch (error) {
-          console.error('Ошибка сохранения:', error);
-          alert('❌ Ошибка при сохранении настроек');
+          console.error('Ошибка сохранения настроек:', error);
+          alert('❌ Ошибка сохранения настроек');
         }
       };
 

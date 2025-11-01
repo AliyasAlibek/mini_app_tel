@@ -635,6 +635,18 @@
       };
 
       if (loading) {
+        // Убираем HTML прелоадер когда показываем React спиннер
+        setTimeout(() => {
+          const htmlLoader = document.getElementById('html-loader');
+          if (htmlLoader) {
+            htmlLoader.style.opacity = '0';
+            htmlLoader.style.transition = 'opacity 0.3s ease-out';
+            setTimeout(() => {
+              htmlLoader.style.display = 'none';
+            }, 300);
+          }
+        }, 50);
+        
         return (
           <div className="min-h-screen bg-gradient-to-br from-pink-50 to-orange-50 flex items-center justify-center">
             <div className="text-center">
@@ -1238,17 +1250,7 @@
     // Рендерим приложение
     ReactDOM.render(<BakeryShop />, document.getElementById('root'));
     
-    // Убираем HTML прелоадер после рендера React
-    setTimeout(() => {
-      const htmlLoader = document.getElementById('html-loader');
-      if (htmlLoader) {
-        htmlLoader.style.opacity = '0';
-        htmlLoader.style.transition = 'opacity 0.3s ease-out';
-        setTimeout(() => {
-          htmlLoader.style.display = 'none';
-        }, 300);
-      }
-    }, 100);
+    // HTML прелоадер уберется автоматически когда React покажет свой спиннер
   </script>
 </body>
 </html>

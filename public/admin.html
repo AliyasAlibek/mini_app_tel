@@ -110,6 +110,10 @@
       
       const [orderFilter, setOrderFilter] = useState('all');
       
+      // Пагинация
+      const [ordersPage, setOrdersPage] = useState(1);
+      const ORDERS_PER_PAGE = 20;
+      
       // Система согласования
       const [negotiationModal, setNegotiationModal] = useState(null);
       const [negotiationPrice, setNegotiationPrice] = useState('');
@@ -163,9 +167,10 @@
 
       const loadProducts = async () => {
         try {
+          // Загружаем только нужные поля
           const { data, error } = await supabase
             .from('products')
-            .select('*')
+            .select('id, name, name_kk, description, description_kk, price, category, category_kk, image, available, created_at')
             .order('created_at', { ascending: false });
 
           if (error) throw error;
@@ -175,27 +180,40 @@
         }
       };
 
-      const loadOrders = async () => {
+      const loadOrders = async (page = 1) => {
         try {
+          const from = (page - 1) * ORDERS_PER_PAGE;
+          const to = from + ORDERS_PER_PAGE - 1;
+          
+          // Загружаем только нужные поля (не все!)
           const { data, error } = await supabase
             .from('orders')
-            .select('*')
+            .select('id, date, created_at, customer_name, customer_phone, customer_comment, telegram_user_id, telegram_username, items, total, status, admin_comment, proposed_price, negotiation_status')
             .order('created_at', { ascending: false })
-            .limit(100); // Загружаем только последние 100 заказов
+            .range(from, to);
 
           if (error) {
             console.error('Ошибка загрузки заказов:', error);
             // Пробуем с полем date если created_at не существует
             const { data: data2, error: error2 } = await supabase
               .from('orders')
-              .select('*')
+              .select('id, date, customer_name, customer_phone, customer_comment, telegram_user_id, telegram_username, items, total, status, admin_comment, proposed_price, negotiation_status')
               .order('date', { ascending: false })
-              .limit(100); // Загружаем только последние 100 заказов
+              .range(from, to);
             
             if (error2) throw error2;
-            setOrders(data2 || []);
+            
+            if (page === 1) {
+              setOrders(data2 || []);
+            } else {
+              setOrders(prev => [...prev, ...(data2 || [])]);
+            }
           } else {
-            setOrders(data || []);
+            if (page === 1) {
+              setOrders(data || []);
+            } else {
+              setOrders(prev => [...prev, ...(data || [])]);
+            }
           }
         } catch (error) {
           console.error('Критическая ошибка загрузки заказов:', error);
@@ -922,6 +940,22 @@
                       </div>
                     );
                   })}
+                </div>
+              )}
+              
+              {/* Кнопка "Загрузить еще" */}
+              {filteredOrders.length > 0 && filteredOrders.length >= ORDERS_PER_PAGE * ordersPage && (
+                <div className="mt-4 text-center">
+                  <button
+                    onClick={() => {
+                      const nextPage = ordersPage + 1;
+                      setOrdersPage(nextPage);
+                      loadOrders(nextPage);
+                    }}
+                    className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition"
+                  >
+                    📥 Загрузить еще 20 заказов
+                  </button>
                 </div>
               )}
             </div>

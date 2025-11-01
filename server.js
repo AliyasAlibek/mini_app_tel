@@ -1050,17 +1050,78 @@ app.post('/api/confirm-order', async (req, res) => {
 });
 
 // API: Предложить изменения
-app.post('/api/propose-changes', async (req, res) => {
+// API: Отправить кнопку оплаты клиенту
+app.post('/api/send-payment-button', async (req, res) => {
   try {
-    const { orderId, comment, newPrice, telegramUserId } = req.body;
+    const { orderId, total, telegramUserId } = req.body;
+
+    if (!telegramUserId || !orderId || !total) {
+      return res.status(400).json({ error: 'Неверные данные' });
+    }
+
+    // Получаем настройки для реквизитов
+    const { data: settings } = await supabase
+      .from('settings')
+      .select('*')
+      .limit(1)
+      .single();
+
+    if (!settings || !settings.payment_enabled) {
+      return res.json({ success: true, message: 'Оплата отключена' });
+    }
+
+    const kaspiPhone = settings.kaspi_phone;
+    const kaspiLink = settings.kaspi_link;
+
+    let message = `✅ <b>Заказ подтверждён!</b>\n\n`;
+    message += `📋 Заказ #${orderId.slice(-6)}\n`;
+    message += `💰 Сумма к оплате: ${total} ₸\n\n`;
+    message += `<b>💳 Реквизиты для оплаты:</b>\n`;
+    message += `Kaspi Gold: ${kaspiPhone}\n\n`;
+    message += `<i>После оплаты пришлите скриншот чека в этот чат 👇</i>`;
+
+    const keyboard = {
+      inline_keyboard: []
+    };
+
+    if (kaspiLink) {
+      keyboard.inline_keyboard.push([
+        { text: '💳 Оплатить через Kaspi', url: kaspiLink }
+      ]);
+    }
 
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       chat_id: telegramUserId,
-      text: `⚠️ <b>По вашему заказу есть уточнения</b>\n\n${comment}\n\n💰 Предлагаемая цена: ${newPrice}₸\n\nЧто выберете?`,
+      text: message,
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+
+    // Сохраняем связь orderId -> userId для обработки чека
+    pendingReceipts.set(orderId, {
+      userId: telegramUserId,
+      orderNumber: orderId.slice(-6),
+      total: total
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Ошибка отправки кнопки оплаты:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/propose-changes', async (req, res) => {
+  try {
+    const { orderId, adminComment, proposedPrice, telegramUserId } = req.body;
+
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: telegramUserId,
+      text: `⚠️ <b>По вашему заказу есть уточнения</b>\n\n${adminComment}\n\n💰 Предлагаемая цена: ${proposedPrice}₸\n\nЧто выберете?`,
       parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
-          [{ text: `✅ Согласен на ${newPrice}₸`, callback_data: `accept_proposal_${orderId}` }],
+          [{ text: `✅ Согласен на ${proposedPrice}₸`, callback_data: `accept_proposal_${orderId}` }],
           [{ text: '🎨 Хочу обсудить', url: `tg://user?id=${ADMIN_ID}` }],
           [{ text: '❌ Отменить заказ', callback_data: `cancel_order_${orderId}` }]
         ]

@@ -19,6 +19,56 @@
   </style>
 </head>
 <body>
+  <!-- HTML Прелоадер (показывается до загрузки React) -->
+  <div id="html-loader" style="
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #fdf2f8 0%, #fff7ed 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  ">
+    <!-- Lottie анимация торта -->
+    <div id="lottie-animation" style="width: 200px; height: 200px;"></div>
+    
+    <!-- Текст загрузки -->
+    <p style="
+      margin-top: 20px;
+      color: #ec4899;
+      font-size: 18px;
+      font-weight: 600;
+      animation: pulse 1.5s ease-in-out infinite;
+    ">Загрузка...</p>
+    
+    <style>
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+    </style>
+  </div>
+  
+  <!-- Загружаем Lottie библиотеку -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+  <script>
+    // Запускаем анимацию торта
+    if (typeof lottie !== 'undefined') {
+      lottie.loadAnimation({
+        container: document.getElementById('lottie-animation'),
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        path: 'https://lottie.host/eb6554b9-69b2-4f5f-8e7a-8b6d3c5c0e4a/HJZXKEcE4e.json'
+      });
+    }
+  </script>
+
   <div id="root"></div>
 
   <script type="text/babel">
@@ -1192,7 +1242,20 @@
       );
     };
 
+    // Рендерим приложение
     ReactDOM.render(<BakeryShop />, document.getElementById('root'));
+    
+    // Убираем HTML прелоадер после рендера React
+    setTimeout(() => {
+      const htmlLoader = document.getElementById('html-loader');
+      if (htmlLoader) {
+        htmlLoader.style.opacity = '0';
+        htmlLoader.style.transition = 'opacity 0.3s ease-out';
+        setTimeout(() => {
+          htmlLoader.style.display = 'none';
+        }, 300);
+      }
+    }, 100);
   </script>
 </body>
 </html>

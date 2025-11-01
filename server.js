@@ -45,12 +45,14 @@ app.post('/api/send-order', async (req, res) => {
       customerComment,
       telegramUserId, 
       telegramUsername, 
-      items, 
       total,
       paymentEnabled,
       kaspiPhone,
       kaspiLink
     } = req.body;
+    
+    // items объявляем как let, чтобы можно было переназначить после загрузки в Storage
+    let items = req.body.items;
 
     if (!orderId || !items || !total) {
       return res.status(400).json({ error: 'Неверные данные заказа' });

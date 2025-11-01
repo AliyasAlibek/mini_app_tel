@@ -34,8 +34,12 @@
     z-index: 10000;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   ">
-    <!-- Lottie анимация торта -->
-    <div id="lottie-animation" style="width: 200px; height: 200px;"></div>
+    <!-- Анимированный торт -->
+    <div style="
+      font-size: 80px;
+      animation: bounce 1s ease-in-out infinite;
+      filter: drop-shadow(0 4px 8px rgba(0,0,0,0.1));
+    ">🎂</div>
     
     <!-- Текст загрузки -->
     <p style="
@@ -51,23 +55,12 @@
         0%, 100% { opacity: 1; }
         50% { opacity: 0.5; }
       }
+      @keyframes bounce {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50% { transform: translateY(-20px) scale(1.1); }
+      }
     </style>
   </div>
-  
-  <!-- Загружаем Lottie библиотеку -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
-  <script>
-    // Запускаем анимацию торта
-    if (typeof lottie !== 'undefined') {
-      lottie.loadAnimation({
-        container: document.getElementById('lottie-animation'),
-        renderer: 'svg',
-        loop: true,
-        autoplay: true,
-        path: 'https://lottie.host/eb6554b9-69b2-4f5f-8e7a-8b6d3c5c0e4a/HJZXKEcE4e.json'
-      });
-    }
-  </script>
 
   <div id="root"></div>
 

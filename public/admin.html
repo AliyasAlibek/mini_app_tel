@@ -19,6 +19,50 @@
   </style>
 </head>
 <body>
+  <!-- HTML Прелоадер для админки -->
+  <div id="html-loader" style="
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #eef2ff 0%, #f0f9ff 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  ">
+    <!-- Иконка админки -->
+    <div style="
+      font-size: 80px;
+      animation: spin 2s linear infinite;
+      filter: drop-shadow(0 4px 8px rgba(0,0,0,0.1));
+    ">⚙️</div>
+    
+    <!-- Текст загрузки -->
+    <p style="
+      margin-top: 20px;
+      color: #4f46e5;
+      font-size: 18px;
+      font-weight: 600;
+    ">Загрузка админ-панели...</p>
+    
+    <p style="
+      margin-top: 10px;
+      color: #6b7280;
+      font-size: 14px;
+    ">Загружаем товары и заказы</p>
+    
+    <style>
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+  </div>
+
   <div id="root"></div>
 
   <script type="text/babel">
@@ -136,7 +180,8 @@
           const { data, error } = await supabase
             .from('orders')
             .select('*')
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .limit(100); // Загружаем только последние 100 заказов
 
           if (error) {
             console.error('Ошибка загрузки заказов:', error);
@@ -144,7 +189,8 @@
             const { data: data2, error: error2 } = await supabase
               .from('orders')
               .select('*')
-              .order('date', { ascending: false });
+              .order('date', { ascending: false })
+              .limit(100); // Загружаем только последние 100 заказов
             
             if (error2) throw error2;
             setOrders(data2 || []);
@@ -1238,6 +1284,18 @@
     };
 
     ReactDOM.render(<AdminPanel />, document.getElementById('root'));
+    
+    // Убираем HTML прелоадер после рендера React
+    setTimeout(() => {
+      const htmlLoader = document.getElementById('html-loader');
+      if (htmlLoader) {
+        htmlLoader.style.opacity = '0';
+        htmlLoader.style.transition = 'opacity 0.3s ease-out';
+        setTimeout(() => {
+          htmlLoader.style.display = 'none';
+        }, 300);
+      }
+    }, 100);
   </script>
 </body>
 </html>

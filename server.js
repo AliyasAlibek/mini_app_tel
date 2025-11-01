@@ -100,13 +100,73 @@ app.post('/api/send-order', async (req, res) => {
       parse_mode: 'HTML'
     });
 
+    // Функция загрузки фото в Storage и замены base64 на URL
+    const uploadPhotoToStorage = async (item, orderId) => {
+      if (!item.customDetails?.customDecorImage) return item;
+      
+      try {
+        // Если это уже URL (начинается с http) - не трогаем
+        if (item.customDetails.customDecorImage.startsWith('http')) {
+          return item;
+        }
+
+        // Извлекаем base64 данные
+        const base64Data = item.customDetails.customDecorImage.split(',')[1];
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        // Генерируем уникальное имя файла
+        const fileName = `${orderId}-${Date.now()}.jpg`;
+        
+        // Загружаем в Supabase Storage
+        const { data, error } = await supabase.storage
+          .from('cake-references')
+          .upload(fileName, buffer, {
+            contentType: 'image/jpeg',
+            cacheControl: '3600',
+            upsert: false
+          });
+
+        if (error) {
+          console.error('Ошибка загрузки в Storage:', error);
+          return item; // Возвращаем оригинал если ошибка
+        }
+
+        // Получаем публичный URL
+        const { data: urlData } = supabase.storage
+          .from('cake-references')
+          .getPublicUrl(fileName);
+
+        // Заменяем base64 на URL
+        return {
+          ...item,
+          customDetails: {
+            ...item.customDetails,
+            customDecorImage: urlData.publicUrl
+          }
+        };
+      } catch (error) {
+        console.error('Ошибка обработки фото:', error);
+        return item; // Возвращаем оригинал если ошибка
+      }
+    };
+
+    // Загружаем фото в Storage и заменяем base64 на URLs
+    const itemsWithUrls = await Promise.all(
+      items.map(item => uploadPhotoToStorage(item, orderId))
+    );
+
+    // Обновляем items с URLs вместо base64
+    items = itemsWithUrls;
+
     // Отправляем фото референсов если есть
     for (const item of items) {
-      if (item.customDetails?.customDecorImage) {
+      if (item.customDetails?.customDecorImage && item.customDetails.customDecorImage.startsWith('http')) {
         try {
-          // Извлекаем base64 данные
-          const base64Data = item.customDetails.customDecorImage.split(',')[1];
-          const buffer = Buffer.from(base64Data, 'base64');
+          // Скачиваем фото по URL для отправки в Telegram
+          const response = await axios.get(item.customDetails.customDecorImage, {
+            responseType: 'arraybuffer'
+          });
+          const buffer = Buffer.from(response.data);
           
           // Отправляем фото
           const FormData = require('form-data');

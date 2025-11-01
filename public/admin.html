@@ -440,6 +440,11 @@
       // Функция для получения всех фото из заказа
       const getOrderPhotos = (order) => {
         const photos = [];
+        // Проверяем что items существует и это массив
+        if (!order.items || !Array.isArray(order.items)) {
+          return photos;
+        }
+        
         order.items.forEach(item => {
           if (item.customCake?.referencePhoto) {
             photos.push({

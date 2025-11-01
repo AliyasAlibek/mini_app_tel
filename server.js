@@ -946,9 +946,10 @@ async function setupWebhookOnStartup() {
     // Получаем текущий URL где запущен сервер
     const webhookUrl = `https://mini-app-tel.onrender.com/webhook`;
     
-    // Проверяем текущий webhook
+    // Проверяем текущий webhook (с таймаутом 5 секунд)
     const checkResponse = await axios.get(
-      `https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`
+      `https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`,
+      { timeout: 5000 }
     );
     
     const currentWebhook = checkResponse.data.result.url;
@@ -959,11 +960,12 @@ async function setupWebhookOnStartup() {
       return;
     }
     
-    // Устанавливаем webhook
+    // Устанавливаем webhook (с таймаутом 5 секунд)
     console.log(`🔄 Установка webhook: ${webhookUrl}...`);
     const setResponse = await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`,
-      { url: webhookUrl }
+      { url: webhookUrl },
+      { timeout: 5000 }
     );
     
     if (setResponse.data.ok) {
@@ -973,6 +975,7 @@ async function setupWebhookOnStartup() {
     }
   } catch (error) {
     console.error(`❌ Ошибка при установке webhook:`, error.message);
+    // Не бросаем ошибку дальше - пусть сервер продолжит работу
   }
 }
 
@@ -1049,7 +1052,6 @@ app.post('/api/confirm-order', async (req, res) => {
   }
 });
 
-// API: Предложить изменения
 // API: Отправить кнопку оплаты клиенту
 app.post('/api/send-payment-button', async (req, res) => {
   try {
@@ -1160,7 +1162,7 @@ app.post('/api/reject-order', async (req, res) => {
 });
 
 // Запуск сервера
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
   console.log(`📱 Telegram Bot: ${BOT_TOKEN ? '✅ Настроен' : '❌ Не настроен'}`);
   console.log(`🗄️  Supabase: ${SUPABASE_URL ? '✅ Настроен' : '❌ Не настроен'}`);
@@ -1168,10 +1170,12 @@ app.listen(PORT, async () => {
   console.log(`   POST /webhook (рекомендуется)`);
   console.log(`   POST /bot${BOT_TOKEN}`);
   
-  // Автоматически устанавливаем webhook
+  // Автоматически устанавливаем webhook (асинхронно, не блокируя запуск)
   if (BOT_TOKEN) {
     console.log('');
-    await setupWebhookOnStartup();
+    setupWebhookOnStartup().catch(err => {
+      console.error('Ошибка установки webhook:', err.message);
+    });
   }
   
   console.log('');

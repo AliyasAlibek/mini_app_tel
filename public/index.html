@@ -19,49 +19,6 @@
   </style>
 </head>
 <body>
-  <!-- HTML Прелоадер (показывается до загрузки React) -->
-  <div id="html-loader" style="
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(135deg, #fdf2f8 0%, #fff7ed 100%);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    z-index: 10000;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-  ">
-    <!-- Анимированный торт -->
-    <div style="
-      font-size: 80px;
-      animation: bounce 1s ease-in-out infinite;
-      filter: drop-shadow(0 4px 8px rgba(0,0,0,0.1));
-    ">🎂</div>
-    
-    <!-- Текст загрузки -->
-    <p style="
-      margin-top: 20px;
-      color: #ec4899;
-      font-size: 18px;
-      font-weight: 600;
-      animation: pulse 1.5s ease-in-out infinite;
-    ">Загрузка...</p>
-    
-    <style>
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-      }
-      @keyframes bounce {
-        0%, 100% { transform: translateY(0) scale(1); }
-        50% { transform: translateY(-20px) scale(1.1); }
-      }
-    </style>
-  </div>
-
   <div id="root"></div>
 
   <script type="text/babel">
@@ -508,34 +465,6 @@
         setView('cart');
       };
 
-      const sendTelegramNotification = async (order) => {
-        try {
-          await fetch(`${API_URL}/api/send-order`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              orderId: order.id,
-              customerName: order.customer_name,
-              customerPhone: order.customer_phone,
-              customerComment: order.customer_comment,
-              telegramUserId: order.telegram_user_id,
-              telegramUsername: order.telegram_username,
-              items: order.items,
-              total: order.total,
-              paymentEnabled: settings?.payment_enabled || false,
-              kaspiPhone: settings?.kaspi_phone || '',
-              kaspiLink: settings?.kaspi_link || ''
-            })
-          });
-        } catch (error) {
-          console.error('Ошибка отправки уведомления админу:', error);
-        }
-      };
-
-      const sendPaymentInfo = async (order) => {
-        // Сервер сам отправит реквизиты если payment_enabled
-      };
-
       const submitOrder = async () => {
         if (!orderForm.name || !orderForm.phone) {
           alert(t.fillRequired);
@@ -551,7 +480,6 @@
         }
 
         const order = {
-          id: Date.now().toString(),
           customer_name: orderForm.name,
           customer_phone: orderForm.phone,
           customer_comment: orderForm.comment,
@@ -561,19 +489,27 @@
           telegram_last_name: telegramUser?.last_name || null,
           items: cart,
           total: getTotalPrice(),
-          status: settings?.payment_enabled ? 'pending_payment' : 'new'
+          status: settings?.payment_enabled ? 'pending_payment' : 'new',
+          paymentEnabled: settings?.payment_enabled || false,
+          kaspiPhone: settings?.kaspi_phone || '',
+          kaspiLink: settings?.kaspi_link || ''
         };
 
         try {
-          const { error } = await supabase
-            .from('orders')
-            .insert([order]);
+          // Отправляем заказ на сервер - он сам обработает всё (фото, БД, уведомления)
+          const response = await fetch(`${API_URL}/api/create-order`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(order)
+          });
 
-          if (error) throw error;
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Ошибка создания заказа');
+          }
+
+          const result = await response.json();
           
-          await sendTelegramNotification(order);
-          await sendPaymentInfo(order);
-
           setCart([]);
           setOrderForm({ ...orderForm, comment: '' });
           setView('catalog');
@@ -635,18 +571,6 @@
       };
 
       if (loading) {
-        // Убираем HTML прелоадер когда показываем React спиннер
-        setTimeout(() => {
-          const htmlLoader = document.getElementById('html-loader');
-          if (htmlLoader) {
-            htmlLoader.style.opacity = '0';
-            htmlLoader.style.transition = 'opacity 0.3s ease-out';
-            setTimeout(() => {
-              htmlLoader.style.display = 'none';
-            }, 300);
-          }
-        }, 50);
-        
         return (
           <div className="min-h-screen bg-gradient-to-br from-pink-50 to-orange-50 flex items-center justify-center">
             <div className="text-center">
@@ -1247,10 +1171,7 @@
       );
     };
 
-    // Рендерим приложение
     ReactDOM.render(<BakeryShop />, document.getElementById('root'));
-    
-    // HTML прелоадер уберется автоматически когда React покажет свой спиннер
   </script>
 </body>
 </html>

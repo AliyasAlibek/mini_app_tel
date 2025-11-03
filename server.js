@@ -35,6 +35,72 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Хранилище для временных данных (orderId -> userId)
 const pendingReceipts = new Map();
 
+// API: Создание заказа (новый endpoint)
+app.post('/api/create-order', async (req, res) => {
+  try {
+    const order = req.body;
+    
+    // Генерируем ID
+    const orderId = Date.now().toString();
+    order.id = orderId;
+    
+    // Обрабатываем items с фото (если есть blob: URL, загружаем в Storage)
+    if (order.items && Array.isArray(order.items)) {
+      for (let item of order.items) {
+        // Референс фото кастомного торта
+        if (item.customCake?.referencePhoto && typeof item.customCake.referencePhoto === 'string' && item.customCake.referencePhoto.startsWith('blob:')) {
+          // Клиент не может отправить blob через JSON, пропускаем
+          // В будущем можно сделать через FormData
+          console.log('Обнаружен blob URL для референс фото - пропускаем');
+          delete item.customCake.referencePhoto;
+        }
+        
+        // Фото декора
+        if (item.customDetails?.customDecorImage && typeof item.customDetails.customDecorImage === 'string' && item.customDetails.customDecorImage.startsWith('blob:')) {
+          console.log('Обнаружен blob URL для декора - пропускаем');
+          delete item.customDetails.customDecorImage;
+        }
+      }
+    }
+    
+    // Сохраняем заказ в БД
+    const { error } = await supabase
+      .from('orders')
+      .insert([order]);
+    
+    if (error) {
+      console.error('Ошибка сохранения заказа:', error);
+      return res.status(500).json({ error: 'Ошибка сохранения заказа', details: error.message });
+    }
+    
+    // Отправляем уведомление админу через существующий endpoint
+    try {
+      await axios.post(`${process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000'}/api/send-order`, {
+        orderId: order.id,
+        customerName: order.customer_name,
+        customerPhone: order.customer_phone,
+        customerComment: order.customer_comment,
+        telegramUserId: order.telegram_user_id,
+        telegramUsername: order.telegram_username,
+        items: order.items,
+        total: order.total,
+        paymentEnabled: order.paymentEnabled,
+        kaspiPhone: order.kaspiPhone,
+        kaspiLink: order.kaspiLink
+      });
+    } catch (notifError) {
+      console.error('Ошибка отправки уведомления:', notifError);
+      // Не возвращаем ошибку - заказ уже создан
+    }
+    
+    res.json({ success: true, orderId: order.id });
+    
+  } catch (error) {
+    console.error('Ошибка создания заказа:', error);
+    res.status(500).json({ error: 'Ошибка создания заказа', details: error.message });
+  }
+});
+
 // API: Отправка заказа в Telegram
 app.post('/api/send-order', async (req, res) => {
   try {

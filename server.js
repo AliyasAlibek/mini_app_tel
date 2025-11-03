@@ -38,30 +38,55 @@ const pendingReceipts = new Map();
 // API: Создание заказа (новый endpoint)
 app.post('/api/create-order', async (req, res) => {
   try {
-    const order = req.body;
+    const { 
+      customer_name, 
+      customer_phone, 
+      customer_comment,
+      telegram_user_id, 
+      telegram_username, 
+      telegram_first_name,
+      telegram_last_name,
+      items, 
+      total,
+      status
+    } = req.body;
     
     // Генерируем ID
     const orderId = Date.now().toString();
-    order.id = orderId;
     
-    // Обрабатываем items с фото (если есть blob: URL, загружаем в Storage)
-    if (order.items && Array.isArray(order.items)) {
-      for (let item of order.items) {
-        // Референс фото кастомного торта
-        if (item.customCake?.referencePhoto && typeof item.customCake.referencePhoto === 'string' && item.customCake.referencePhoto.startsWith('blob:')) {
-          // Клиент не может отправить blob через JSON, пропускаем
-          // В будущем можно сделать через FormData
-          console.log('Обнаружен blob URL для референс фото - пропускаем');
-          delete item.customCake.referencePhoto;
+    // Обрабатываем items с фото (если есть blob: URL, просто удаляем их)
+    let processedItems = items;
+    if (items && Array.isArray(items)) {
+      processedItems = items.map(item => {
+        const newItem = { ...item };
+        
+        // Удаляем blob: URL если есть
+        if (newItem.customCake?.referencePhoto && typeof newItem.customCake.referencePhoto === 'string' && newItem.customCake.referencePhoto.startsWith('blob:')) {
+          delete newItem.customCake.referencePhoto;
         }
         
-        // Фото декора
-        if (item.customDetails?.customDecorImage && typeof item.customDetails.customDecorImage === 'string' && item.customDetails.customDecorImage.startsWith('blob:')) {
-          console.log('Обнаружен blob URL для декора - пропускаем');
-          delete item.customDetails.customDecorImage;
+        if (newItem.customDetails?.customDecorImage && typeof newItem.customDetails.customDecorImage === 'string' && newItem.customDetails.customDecorImage.startsWith('blob:')) {
+          delete newItem.customDetails.customDecorImage;
         }
-      }
+        
+        return newItem;
+      });
     }
+    
+    // Создаем объект заказа только с полями которые есть в таблице
+    const order = {
+      id: orderId,
+      customer_name,
+      customer_phone,
+      customer_comment,
+      telegram_user_id,
+      telegram_username,
+      telegram_first_name,
+      telegram_last_name,
+      items: processedItems,
+      total,
+      status
+    };
     
     // Сохраняем заказ в БД
     const { error } = await supabase
@@ -73,8 +98,15 @@ app.post('/api/create-order', async (req, res) => {
       return res.status(500).json({ error: 'Ошибка сохранения заказа', details: error.message });
     }
     
-    // Отправляем уведомление админу через существующий endpoint
+    // Отправляем уведомление админу
     try {
+      // Получаем настройки для передачи в send-order
+      const { data: settings } = await supabase
+        .from('settings')
+        .select('*')
+        .limit(1)
+        .single();
+      
       await axios.post(`${process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000'}/api/send-order`, {
         orderId: order.id,
         customerName: order.customer_name,
@@ -84,9 +116,9 @@ app.post('/api/create-order', async (req, res) => {
         telegramUsername: order.telegram_username,
         items: order.items,
         total: order.total,
-        paymentEnabled: order.paymentEnabled,
-        kaspiPhone: order.kaspiPhone,
-        kaspiLink: order.kaspiLink
+        paymentEnabled: settings?.payment_enabled || false,
+        kaspiPhone: settings?.kaspi_phone || '',
+        kaspiLink: settings?.kaspi_link || ''
       });
     } catch (notifError) {
       console.error('Ошибка отправки уведомления:', notifError);

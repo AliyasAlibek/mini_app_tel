@@ -45,14 +45,12 @@ app.post('/api/send-order', async (req, res) => {
       customerComment,
       telegramUserId, 
       telegramUsername, 
+      items, 
       total,
       paymentEnabled,
       kaspiPhone,
       kaspiLink
     } = req.body;
-    
-    // items объявляем как let, чтобы можно было переназначить после загрузки в Storage
-    let items = req.body.items;
 
     if (!orderId || !items || !total) {
       return res.status(400).json({ error: 'Неверные данные заказа' });
@@ -615,43 +613,99 @@ async function handleWebhook(req, res) {
       } // Конец блока if (text)
 
       // Обработка фото (чек от клиента)
-      if (message.photo && pendingReceipts.has(`waiting_${chatId}`)) {
-        const orderId = pendingReceipts.get(`waiting_${chatId}`);
-        pendingReceipts.delete(`waiting_${chatId}`);
-
+      if (message.photo) {
         const photo = message.photo[message.photo.length - 1];
-        const photoUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${(await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${photo.file_id}`)).data.result.file_path}`;
+        
+        // Проверяем - есть ли флаг ожидания чека
+        if (pendingReceipts.has(`waiting_${chatId}`)) {
+          const orderId = pendingReceipts.get(`waiting_${chatId}`);
+          pendingReceipts.delete(`waiting_${chatId}`);
 
-        // Обновляем заказ
-        await supabase
+          const photoUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${(await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${photo.file_id}`)).data.result.file_path}`;
+
+          // Обновляем заказ
+          await supabase
+            .from('orders')
+            .update({ 
+              receipt_photo: photoUrl,
+              status: 'pending_payment'
+            })
+            .eq('id', orderId);
+
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: chatId,
+            text: `✅ <b>Чек получен!</b>\n\nМы проверим оплату и скоро свяжемся с вами.\n\n🇰🇿 <b>Чек алынды!</b>\n\nТөлемді тексереміз және жақында хабарласамыз.`,
+            parse_mode: 'HTML'
+          });
+
+          // Уведомляем админа
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+            chat_id: ADMIN_ID,
+            photo: photo.file_id,
+            caption: `📸 <b>Новый чек от клиента!</b>\n\n📋 Заказ #${orderId.slice(-6)}\n\nПроверьте оплату:`,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '✅ Подтвердить оплату', callback_data: `confirm_payment_${orderId}` },
+                { text: '❌ Отклонить оплату', callback_data: `reject_payment_${orderId}` }
+              ]]
+            }
+          });
+
+          return res.json({ ok: true });
+        }
+        
+        // Если флага нет - ищем последний заказ этого пользователя
+        const { data: orders } = await supabase
           .from('orders')
-          .update({ 
-            receipt_photo: photoUrl,
-            status: 'pending_payment'
-          })
-          .eq('id', orderId);
+          .select('*')
+          .eq('telegram_user_id', userId)
+          .in('status', ['new', 'pending_payment'])
+          .order('created_at', { ascending: false })
+          .limit(1);
+        
+        if (orders && orders.length > 0) {
+          const order = orders[0];
+          
+          // Сохраняем чек
+          await supabase
+            .from('orders')
+            .update({ 
+              status: 'pending_payment'
+            })
+            .eq('id', order.id);
+          
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: chatId,
+            text: `✅ <b>Чек получен!</b>\n\nМы проверим оплату и скоро свяжемся с вами.\n\n🇰🇿 <b>Чек алынды!</b>\n\nТөлемді тексереміз және жақында хабарласамыз.`,
+            parse_mode: 'HTML'
+          });
 
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          chat_id: chatId,
-          text: `✅ <b>Чек получен!</b>\n\nМы проверим оплату и скоро свяжемся с вами.\n\n🇰🇿 <b>Чек алынды!</b>\n\nТөлемді тексереміз және жақында хабарласамыз.`,
-          parse_mode: 'HTML'
-        });
-
-        // Уведомляем админа
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-          chat_id: ADMIN_ID,
-          photo: photo.file_id,
-          caption: `📸 <b>Новый чек от клиента!</b>\n\n📋 Заказ #${orderId.slice(-6)}\n\nПроверьте оплату:`,
-          parse_mode: 'HTML',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '✅ Подтвердить оплату', callback_data: `confirm_payment_${orderId}` },
-              { text: '❌ Отклонить оплату', callback_data: `reject_payment_${orderId}` }
-            ]]
-          }
-        });
-
-        return res.json({ ok: true });
+          // Уведомляем админа с кнопками
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+            chat_id: ADMIN_ID,
+            photo: photo.file_id,
+            caption: `📸 <b>Получен чек от клиента!</b>\n\n📋 Заказ #${order.id.slice(-6)}\n👤 Клиент: ${order.customer_name}\n💰 Сумма: ${order.total} ₸\n\nПроверьте оплату:`,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '✅ Подтвердить оплату', callback_data: `confirm_payment_${order.id}` },
+                { text: '❌ Отклонить оплату', callback_data: `reject_payment_${order.id}` }
+              ]]
+            }
+          });
+          
+          return res.json({ ok: true });
+        } else {
+          // Нет заказа для оплаты
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: chatId,
+            text: `❌ Не найден заказ ожидающий оплаты.\n\nСначала оформите заказ через кнопку '📦 Кондитерская'\n\n🇰🇿 Төлем күтіп тұрған тапсырыс табылмады.`,
+            parse_mode: 'HTML'
+          });
+          
+          return res.json({ ok: true });
+        }
       }
     }
 
@@ -946,10 +1000,9 @@ async function setupWebhookOnStartup() {
     // Получаем текущий URL где запущен сервер
     const webhookUrl = `https://mini-app-tel.onrender.com/webhook`;
     
-    // Проверяем текущий webhook (с таймаутом 5 секунд)
+    // Проверяем текущий webhook
     const checkResponse = await axios.get(
-      `https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`,
-      { timeout: 5000 }
+      `https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`
     );
     
     const currentWebhook = checkResponse.data.result.url;
@@ -960,12 +1013,11 @@ async function setupWebhookOnStartup() {
       return;
     }
     
-    // Устанавливаем webhook (с таймаутом 5 секунд)
+    // Устанавливаем webhook
     console.log(`🔄 Установка webhook: ${webhookUrl}...`);
     const setResponse = await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`,
-      { url: webhookUrl },
-      { timeout: 5000 }
+      { url: webhookUrl }
     );
     
     if (setResponse.data.ok) {
@@ -975,7 +1027,6 @@ async function setupWebhookOnStartup() {
     }
   } catch (error) {
     console.error(`❌ Ошибка при установке webhook:`, error.message);
-    // Не бросаем ошибку дальше - пусть сервер продолжит работу
   }
 }
 
@@ -1052,78 +1103,18 @@ app.post('/api/confirm-order', async (req, res) => {
   }
 });
 
-// API: Отправить кнопку оплаты клиенту
-app.post('/api/send-payment-button', async (req, res) => {
-  try {
-    const { orderId, total, telegramUserId } = req.body;
-
-    if (!telegramUserId || !orderId || !total) {
-      return res.status(400).json({ error: 'Неверные данные' });
-    }
-
-    // Получаем настройки для реквизитов
-    const { data: settings } = await supabase
-      .from('settings')
-      .select('*')
-      .limit(1)
-      .single();
-
-    if (!settings || !settings.payment_enabled) {
-      return res.json({ success: true, message: 'Оплата отключена' });
-    }
-
-    const kaspiPhone = settings.kaspi_phone;
-    const kaspiLink = settings.kaspi_link;
-
-    let message = `✅ <b>Заказ подтверждён!</b>\n\n`;
-    message += `📋 Заказ #${orderId.slice(-6)}\n`;
-    message += `💰 Сумма к оплате: ${total} ₸\n\n`;
-    message += `<b>💳 Реквизиты для оплаты:</b>\n`;
-    message += `Kaspi Gold: ${kaspiPhone}\n\n`;
-    message += `<i>После оплаты пришлите скриншот чека в этот чат 👇</i>`;
-
-    const keyboard = {
-      inline_keyboard: []
-    };
-
-    if (kaspiLink) {
-      keyboard.inline_keyboard.push([
-        { text: '💳 Оплатить через Kaspi', url: kaspiLink }
-      ]);
-    }
-
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      chat_id: telegramUserId,
-      text: message,
-      parse_mode: 'HTML',
-      reply_markup: keyboard
-    });
-
-    // Сохраняем связь orderId -> userId для обработки чека
-    pendingReceipts.set(orderId, {
-      userId: telegramUserId,
-      orderNumber: orderId.slice(-6),
-      total: total
-    });
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Ошибка отправки кнопки оплаты:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
+// API: Предложить изменения
 app.post('/api/propose-changes', async (req, res) => {
   try {
-    const { orderId, adminComment, proposedPrice, telegramUserId } = req.body;
+    const { orderId, comment, newPrice, telegramUserId } = req.body;
 
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       chat_id: telegramUserId,
-      text: `⚠️ <b>По вашему заказу есть уточнения</b>\n\n${adminComment}\n\n💰 Предлагаемая цена: ${proposedPrice}₸\n\nЧто выберете?`,
+      text: `⚠️ <b>По вашему заказу есть уточнения</b>\n\n${comment}\n\n💰 Предлагаемая цена: ${newPrice}₸\n\nЧто выберете?`,
       parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
-          [{ text: `✅ Согласен на ${proposedPrice}₸`, callback_data: `accept_proposal_${orderId}` }],
+          [{ text: `✅ Согласен на ${newPrice}₸`, callback_data: `accept_proposal_${orderId}` }],
           [{ text: '🎨 Хочу обсудить', url: `tg://user?id=${ADMIN_ID}` }],
           [{ text: '❌ Отменить заказ', callback_data: `cancel_order_${orderId}` }]
         ]
@@ -1162,7 +1153,7 @@ app.post('/api/reject-order', async (req, res) => {
 });
 
 // Запуск сервера
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
   console.log(`📱 Telegram Bot: ${BOT_TOKEN ? '✅ Настроен' : '❌ Не настроен'}`);
   console.log(`🗄️  Supabase: ${SUPABASE_URL ? '✅ Настроен' : '❌ Не настроен'}`);
@@ -1170,12 +1161,10 @@ app.listen(PORT, () => {
   console.log(`   POST /webhook (рекомендуется)`);
   console.log(`   POST /bot${BOT_TOKEN}`);
   
-  // Автоматически устанавливаем webhook (асинхронно, не блокируя запуск)
+  // Автоматически устанавливаем webhook
   if (BOT_TOKEN) {
     console.log('');
-    setupWebhookOnStartup().catch(err => {
-      console.error('Ошибка установки webhook:', err.message);
-    });
+    await setupWebhookOnStartup();
   }
   
   console.log('');

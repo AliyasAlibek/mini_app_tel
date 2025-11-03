@@ -489,10 +489,7 @@
           telegram_last_name: telegramUser?.last_name || null,
           items: cart,
           total: getTotalPrice(),
-          status: settings?.payment_enabled ? 'pending_payment' : 'new',
-          paymentEnabled: settings?.payment_enabled || false,
-          kaspiPhone: settings?.kaspi_phone || '',
-          kaspiLink: settings?.kaspi_link || ''
+          status: settings?.payment_enabled ? 'pending_payment' : 'new'
         };
 
         try {
